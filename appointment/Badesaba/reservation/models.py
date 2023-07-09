@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from datetime import datetime, timedelta
 
 class Doctor(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -34,11 +35,18 @@ class Patient(models.Model):
 
 class Appointment(models.Model):
     start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
+    end_time = models.DateTimeField(default=timezone.now)
     doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE)
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
     def __str__(self):
         return f"{self.doctor} - {self.patient}"
+
+    def end_time(self):
+        return self.start_time + timedelta(minutes=30)
+
+    def save(self, *args, **kwargs):
+        self.end_time_calculated = self.end_time()
+        super().save(*args, **kwargs)
 
 
 
