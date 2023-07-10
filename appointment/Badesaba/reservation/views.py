@@ -1,96 +1,88 @@
-from django.shortcuts import render
 from rest_framework import viewsets
-from .serializers import AppointmentSerializer
-from .models import *
-from rest_framework.views import APIView
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from datetime import datetime, timedelta
-from rest_framework import generics
-from .models import Appointment
-from .serializers import AppointmentSerializer
-from rest_framework import viewsets
-from .models import Patient
-from .serializers import *
 from django.shortcuts import get_object_or_404
-from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from .models import Appointment
-from .serializers import AppointmentSerializer
-# from celery import shared_task
 from django.utils import timezone
-from .models import Appointment
-from rest_framework import generics
-from django_filters.rest_framework import DjangoFilterBackend
-from .models import Appointment
-from .serializers import AppointmentSerializer
-
-# Create your views here.
-from rest_framework import generics
-from rest_framework.response import Response
-from rest_framework import status
-from datetime import timedelta, datetime
-from django.core.exceptions import ValidationError
+from datetime import datetime, timedelta
+from .models import Patient, Doctor, Appointment
+from .serializers import PatientSerializer, DoctorSerializer, AppointmentSerializer
 
 
-class AppointmentListCreateView(generics.ListCreateAPIView):
-    queryset = Appointment.objects.all()
-    serializer_class = AppointmentSerializer
-
-    def post(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data)
-        if serializer.is_valid():
-            doctor = serializer.validated_data['doctor']
-            start_time = serializer.validated_data['start_time']
-            end_time = serializer.validated_data['end_time']
-
-            # Check if start_time and end_time are valid
-            if start_time < timezone.now():
-                return Response({'error': 'Invalid start time'}, status=status.HTTP_400_BAD_REQUEST)
-            if end_time < start_time:
-                return Response({'error': 'Invalid end time'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if doctor is available at the requested time
-            appointments = Appointment.objects.filter(doctor=doctor, start_time__gte=start_time - timedelta(minutes=30),
-                                                      end_time__lte=end_time + timedelta(minutes=30))
-
-            if appointments.exists():
-                return Response({'error': 'Doctor is not available at the requested time'},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            # Create the appointment if everything is valid
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Appointment.objects.all()
-    serializer_class = AppointmentSerializer
-
-
-class DoctorAppointmentsListView(generics.ListAPIView):
-    serializer_class = AppointmentSerializer
-
-    def get_queryset(self):
-        doctor_id = self.kwargs['doctor_id']
-        return Appointment.objects.filter(doctor_id=doctor_id)
-
-
-class PatientAppointmentsListView(generics.ListAPIView):
-    serializer_class = AppointmentSerializer
-
-    def get_queryset(self):
-        patient_id = self.kwargs['patient_id']
-        return Appointment.objects.filter(patient_id=patient_id)
-
-
-class DoctorListView(generics.ListAPIView):
-    queryset = Doctor.objects.all()
-    serializer_class = DoctorSerializer
-
-
-class PatientListView(generics.ListAPIView):
+class PatientViewSet(viewsets.ModelViewSet):
     queryset = Patient.objects.all()
     serializer_class = PatientSerializer
 
+
+class DoctorViewSet(viewsets.ModelViewSet):
+    queryset = Doctor.objects.all()
+    serializer_class = DoctorSerializer
+
+    @action(detail=True, methods=['get'])
+    def appointments(self, request, pk=None):
+        doctor = get_object_or_404(Doctor, pk=pk)
+        appointments = Appointment.objects.filter(doctor=doctor)
+        serializer = AppointmentSerializer(appointments, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def available_slots(self, request, pk=None):
+        doctor = get_object_or_404(Doctor, pk=pk)
+        slots = []
+
+        for i in range(7):
+            date = (timezone.now().date() + timedelta(days=i)).strftime('%Y-%m-%d')
+            appointments = Appointment.objects.filter(doctor=doctor, date=date)
+
+            start_time = datetime.strptime('09:00', '%H:%M')
+            end_time = datetime.strptime('17:00', '%H:%M')
+            while start_time < end_time:
+                slot_time = start_time.time()
+                if not appointments.filter(time=slot_time).exists():
+                    slots.append({'date': date, 'time': slot_time.strftime('%H:%M')})
+                start_time += timedelta(minutes=30)
+
+        return Response({'slots': slots})
+
+
+class AppointmentViewSet(viewsets.ModelViewSet):
+    queryset = Appointment.objects.all()
+    serializer_class = AppointmentSerializer
+
+    def create(self, request):
+        patient_id = request.data.get('patient_id')
+        doctor_id = request.data.get('doctor_id')
+        date = request.data.get('date')
+        time_string = request.data.get('time')
+        time = datetime.strptime(time_string, '%H:%M:%S').time()
+
+        if Appointment.objects.filter(patient_id=patient_id, status='scheduled').exists():
+            return Response({'status': 'failure', 'message': 'Patient already has an appointment'})
+
+        if datetime.strptime(date, '%Y-%m-%d').date() < timezone.now().date():
+            return Response({'status': 'failure', 'message': 'Cannot schedule appointment in the past'})
+
+        start_time = datetime.strptime('09:00', '%H:%M').time()
+        end_time = datetime.strptime('17:00', '%H:%M').time()
+        if datetime.strptime(time_string, '%H:%M:%S').time() < start_time or datetime.strptime(time_string,
+                                                                                               '%H:%M:%S').time() >= end_time:
+            return Response({'status': 'failure', 'message': 'Appointment is outside working hours'})
+
+        if not Doctor.objects.filter(id=doctor_id).exists():
+            return Response({'status': 'failure', 'message': 'Doctor does not exist'})
+
+        if Appointment.objects.filter(doctor_id=doctor_id, status='scheduled', date=date, time=time).exists():
+            return Response({'status': 'failure', 'message': 'Doctor is not available at this time'})
+
+        appointment = Appointment(patient_id=patient_id, doctor_id=doctor_id, date=date, time=time, status='scheduled')
+        appointment.save()
+
+        serializer = AppointmentSerializer(appointment)
+        return Response(serializer.data)
+
+    def update(self, request, pk=None):
+        appointment = get_object_or_404(Appointment, pk=pk)
+        appointment.status = request.data.get('status')
+        appointment.save()
+
+        serializer = AppointmentSerializer(appointment)
+        return Response(serializer.data)

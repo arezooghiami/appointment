@@ -1,12 +1,12 @@
+from django.urls import path, include
+from rest_framework import routers
+from .views import PatientViewSet, DoctorViewSet, AppointmentViewSet
 
-from django.urls import path
-from .views import *
+router = routers.DefaultRouter()
+router.register(r'patients', PatientViewSet)
+router.register(r'doctors', DoctorViewSet)
+router.register(r'appointments', AppointmentViewSet)
 
 urlpatterns = [
-    path('patients/', PatientListView.as_view(), name='patients_list'),
-    path('doctors/', DoctorListView.as_view(), name='doctors_list'),
-    path('appointments/', AppointmentListCreateView.as_view(), name='appointments_list_create'),
-    path('appointments/<int:pk>/', AppointmentDetailView.as_view(), name='appointments_detail'),
-    path('doctors/<int:doctor_id>/appointments/', DoctorAppointmentsListView.as_view(), name='doctor_appointments_list'),
-    path('patients/<int:patient_id>/appointments/', PatientAppointmentsListView.as_view(), name='patient_appointments_list'),
+    path('', include(router.urls)),
 ]
