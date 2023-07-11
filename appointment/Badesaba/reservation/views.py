@@ -49,13 +49,26 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     serializer_class = AppointmentSerializer
 
     def create(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_number = request.data.get('mobile')
         doctor_id = request.data.get('doctor_id')
         date = request.data.get('date')
         time_string = request.data.get('time')
         time = datetime.strptime(time_string, '%H:%M:%S').time()
 
-        if Appointment.objects.filter(patient_id=patient_id, status='scheduled').exists():
+        if not patient_number:
+            return Response({'status': 'failure', 'message': 'Mobile number is required.'})
+
+        if not Patient.objects.filter(contact_info=patient_number).exists():
+            return Response({'status': 'failure', 'message': 'Patient does not exist'})
+
+        patient = Patient.objects.get(contact_info=patient_number)
+
+        if not Doctor.objects.filter(id=doctor_id).exists():
+            return Response({'status': 'failure', 'message': 'Doctor does not exist'})
+
+        doctor = Doctor.objects.get(id=doctor_id)
+
+        if Appointment.objects.filter(patient=patient, status='scheduled').exists():
             return Response({'status': 'failure', 'message': 'Patient already has an appointment'})
 
         if datetime.strptime(date, '%Y-%m-%d').date() < timezone.now().date():
@@ -67,22 +80,50 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                                                                                                '%H:%M:%S').time() >= end_time:
             return Response({'status': 'failure', 'message': 'Appointment is outside working hours'})
 
-        if not Doctor.objects.filter(id=doctor_id).exists():
-            return Response({'status': 'failure', 'message': 'Doctor does not exist'})
-
-        if Appointment.objects.filter(doctor_id=doctor_id, status='scheduled', date=date, time=time).exists():
+        if Appointment.objects.filter(doctor=doctor, status='scheduled', date=date, time=time).exists():
             return Response({'status': 'failure', 'message': 'Doctor is not available at this time'})
 
-        appointment = Appointment(patient_id=patient_id, doctor_id=doctor_id, date=date, time=time, status='scheduled')
+        appointment = Appointment(patient=patient, doctor=doctor, date=date, time=time, status='scheduled')
         appointment.save()
 
         serializer = AppointmentSerializer(appointment)
         return Response(serializer.data)
 
-    def update(self, request, pk=None):
-        appointment = get_object_or_404(Appointment, pk=pk)
-        appointment.status = request.data.get('status')
-        appointment.save()
+    def destroy(self, request, pk=None):
+        patient_number = request.data.get('mobile')
+        if not patient_number:
+            return Response({'status': 'failure', 'message': 'Mobile number is required.'})
 
+        if not Patient.objects.filter(contact_info=patient_number).exists():
+            return Response({'status': 'failure', 'message': 'Patient not found.'})
+
+        patient = Patient.objects.get(contact_info=patient_number)
+        appointment = get_object_or_404(self.queryset, pk=pk, patient=patient)
+        appointment.delete()
+        return Response({'status': 'success', 'message': 'Appointment deleted.'})
+
+    def list(self, request):
+        patient_number = request.data.get('mobile')
+        if not patient_number:
+            return Response({'status': 'failure', 'message': 'Mobile number is required.'})
+
+        if not Patient.objects.filter(contact_info=patient_number).exists():
+            return Response({'status': 'failure', 'message': 'Patient not found.'})
+
+        patient = Patient.objects.get(contact_info=patient_number)
+        appointments = self.queryset.filter(patient=patient)
+        serializer = AppointmentSerializer(appointments, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, pk=None):
+        patient_number = request.data.get('mobile')
+        if not patient_number:
+            return Response({'status': 'failure', 'message': 'Mobile number is required.'})
+
+        if not Patient.objects.filter(contact_info=patient_number).exists():
+            return Response({'status': 'failure', 'message': 'Patient not found.'})
+
+        patient = Patient.objects.get(contact_info=patient_number)
+        appointment = get_object_or_404(self.queryset, pk=pk, patient=patient)
         serializer = AppointmentSerializer(appointment)
         return Response(serializer.data)
